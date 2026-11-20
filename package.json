@@ -11,7 +11,7 @@
     "deploy": "vite build && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types --env-file .dev.vars.example"
   },
   "cloudflare": {
     "bindings": {
