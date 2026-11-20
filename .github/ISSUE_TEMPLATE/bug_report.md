@@ -11,7 +11,8 @@ labels: bug
 **Steps to reproduce**
 
 **Environment**
-- OS:
-- Python:
-- Agent Send version or commit:
-- `agent-send doctor` output (it contains no credentials):
+- Hub version (Settings):
+- Agent runtime (Grok Bot, Hermes, MCP client, API):
+- Hermes version or MCP client, if relevant:
+
+Never paste tokens, invites or webhook keys.

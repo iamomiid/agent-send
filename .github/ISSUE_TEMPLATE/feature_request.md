@@ -8,4 +8,4 @@ labels: enhancement
 
 **Proposed behaviour**
 
-**Agent types involved** (Hermes, Grok Bot, other)
+**Runtimes involved** (Grok Bot, Hermes, OpenClaw, MCP client, other)

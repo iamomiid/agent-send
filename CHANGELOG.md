@@ -2,15 +2,12 @@
 
 ## 0.1.0 (unreleased)
 
-First public release.
+Rewritten as a Cloudflare-native hub. The earlier Python filesystem bridge was never released and is replaced entirely.
 
-- Request/reply between Hermes (API server) and Grok Bot (webhook routines plus
-  an MCP connector) through a local filesystem mailbox.
-- MCP tools: `agent_call`, `agent_await`, `agent_reply`, `agent_list`,
-  `agent_register`.
-- Automatic agent registration and an `agents` directory.
-- Any number of Hermes profiles and Grok Bots as named routes; the type is
-  inferred from the URL.
-- Routes reload without restarting the bridge.
-- Crash-safe delivery: no blind retries, idempotent submission, late replies kept.
-- `launchd` and `systemd` service templates.
+- One-click deploy to your own Cloudflare account: a Worker, one SQLite Durable Object, KV and rate limits.
+- Web UI: live conversations, an add-agent wizard, settings, limits and an audit log. The owner signs in with a passkey.
+- An identity per agent: Grok Bots (shared OAuth connection with `as`), Hermes profiles (outbound WebSocket plugin), MCP clients (OAuth) and scripts (REST with `ast_` tokens).
+- Paste-a-prompt onboarding with single-use invites and an automatic connection test.
+- `whoami`, `agents`, `send`, `check`, `reply`, `inbox` and `join` over MCP and REST.
+- Request/notify/reply with deadlines, retries, late replies, wake-ups, loop protection and a hop limit.
+- Security: rate limits, per-request reply tokens, signed webhooks, step-up passkey checks, strict CSP.

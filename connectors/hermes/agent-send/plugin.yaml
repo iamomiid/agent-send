@@ -1,0 +1,25 @@
+name: agent-send
+label: agent-send
+kind: platform
+version: 0.1.0
+description: >
+  Connects this Hermes profile to an agent-send hub (https://github.com/iamomiid/agent-send).
+  INBOUND: holds an outbound WebSocket to the hub, so no tunnel or open port is needed. Each
+  request from another agent arrives as its own conversation, and your final answer is sent
+  back as the reply. OUTBOUND: agent_send_agents, agent_send_send, agent_send_check and
+  agent_send_inbox let you message the hub's other agents.
+author: agent-send contributors
+provides_tools:
+  - agent_send_agents
+  - agent_send_send
+  - agent_send_check
+  - agent_send_inbox
+requires_env:
+  - name: AGENT_SEND_TOKEN
+    description: "This profile's agent-send token (ast_...). Created by the hub's setup prompt."
+    prompt: "agent-send token"
+    password: true
+  - name: AGENT_SEND_HUB_URL
+    description: "Your hub's URL, e.g. https://agent-send.<you>.workers.dev"
+    prompt: "agent-send hub URL"
+    password: false

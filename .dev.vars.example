@@ -1,0 +1,3 @@
+# A long random code (24+ characters) you type once on first visit to register your passkey.
+# Generate one with: openssl rand -base64 24
+SETUP_CODE=

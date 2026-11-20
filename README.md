@@ -1,207 +1,114 @@
-# Agent Send
+# agent-send
 
-**Let your agents talk to each other.**
+A personal hub that lets your AI agents message each other. Grok Bots, Hermes profiles and any MCP client each join with their own identity. Agents ask each other for things and get answers back, and you watch every conversation in one web UI.
 
-Agent Send is a thin request/reply layer between AI agents. One agent asks a
-question and waits; the other answers; the answer comes back to the exact
-request that asked for it. Routing, waiting and retries are plain code, so no
-model tokens are spent polling an inbox.
+It runs entirely on your own Cloudflare account (a Worker, one Durable Object and a KV namespace), with no servers, tunnels or CLI. Adding an agent means pasting one prompt into it.
 
-```text
- Hermes (your Mac)                      Agent Send bridge                    Grok Bot (hosted)
- ─────────────────                      ─────────────────                    ────────────────
- agent-send grok "…"  ──► request file ─►  POST routine webhook  ──────────►  routine runs
-                                                                              │
- ◄── JSON answer ◄────── reply file ◄───  agent_reply (MCP)  ◄────────────────┘
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/iamomiid/agent-send)
 
- Hermes API run  ◄──── POST /v1/runs ◄──  agent_call (MCP)  ◄──────────────── Grok chat
- final output   ─────────────────────►    agent_await       ────────────────► answer
+## What you get
+
+- **One identity per agent.** Every Grok Bot, Hermes profile or MCP client has its own handle, name and permissions, and you can pause, rotate or revoke each one.
+- **Request and reply.** `send` asks another agent and waits up to 25 seconds for the answer; slower answers are picked up later with `check`. One-way `notify` messages are supported too.
+- **Delivery that suits each runtime.** Hermes profiles keep an outbound WebSocket open, so they need no tunnel. Grok Bots are woken through their own webhook routine. MCP clients and scripts read their inbox.
+- **A web UI.** It shows live conversations, lets you add agents with a setup wizard, holds the settings and limits, and keeps an audit log. You sign in with a passkey.
+- **Guard rails.** Rate limits, a hop limit, loop protection, per-request reply tokens, size caps and deadlines with retries.
+
+## Deploy
+
+1. Click **Deploy to Cloudflare** above. Cloudflare copies this repo into your GitHub account, creates the Worker, Durable Object and KV namespace, and asks for one secret:
+   - `SETUP_CODE`: a long random code (24+ characters, e.g. `openssl rand -base64 24`). You type it once to register your passkey.
+2. Open the Worker's URL (`https://agent-send.<your-subdomain>.workers.dev`), enter the setup code and create a passkey.
+
+The free Workers plan is enough for personal use.
+
+### Manual deploy
+
+```sh
+git clone https://github.com/iamomiid/agent-send && cd agent-send
+pnpm install
+pnpm run deploy                      # builds the UI and deploys the Worker
+npx wrangler secret put SETUP_CODE   # paste a 24+ character random code
 ```
 
-**Status: v0.1, early.** Two agent types are supported today:
+### Your own domain
 
-| Type | How the bridge reaches it | How it answers |
+Add the domain under the Worker's **Settings → Domains & Routes** in the Cloudflare dashboard, or run `npx wrangler deploy --domain hub.example.com`. Later deploys keep it.
+
+Passkeys only work on the hostname they were created on, and the setup code works only once. Use the address you'll keep, or, to add a passkey on a new address later, set a new `SETUP_CODE` and reload that address.
+
+## Add your agents
+
+Go to **Agents → Add agent**, pick the runtime and copy the prompt it gives you. Each prompt carries a single-use invite that expires after an hour.
+
+| Runtime | How it joins | How it receives messages |
 |---|---|---|
-| [Hermes](https://hermes-agent.nousresearch.com) | Hermes API server on loopback (`POST /v1/runs`) | Bridge polls the run's final output |
-| [Grok Bot](https://docs.x.ai/grok-bot) | A webhook-triggered routine | The Bot calls the `agent_reply` MCP tool |
+| **Grok Bot** | Paste the prompt into the Bot. It adds the `agent-send` MCP connector (you approve it once per Grok account and choose **Shared by several agents**), joins with its invite and creates an "agent-send inbound" routine. | Its routine's webhook. Paste the routine's webhook URL and key into the hub. |
+| **Hermes profile** | Paste the prompt into a chat with that profile. Its script exchanges the invite for the profile's token and installs the [Hermes plugin](https://github.com/iamomiid/agent-send-hermes). | An outbound WebSocket from the plugin. Requests arrive as their own conversations, and the final answer goes back as the reply. |
+| **MCP client** (Claude, Cursor, ChatGPT, Claude Code…) | Add `https://<your-hub>/mcp` as a remote MCP server and sign in. On the hub's consent page you choose **One agent** and its handle. | `inbox`, or a signed webhook. |
+| **Script / API** | `POST /api/v1/join` with the invite returns an `ast_…` token. | `GET /api/v1/inbox`, or a signed webhook. |
 
-You can add any number of routes of each type (several Hermes profiles, several
-Grok Bots). More agent types may come later; see [Scope](#scope).
+After an agent joins, the hub pings it. You should see `PONG` in Conversations within a minute.
 
-## Requirements
+### Grok Bots on one account
 
-- macOS or Linux (the mailbox uses `flock`; Windows is not supported)
-- Python 3.11+ and [uv](https://docs.astral.sh/uv/)
-- For Grok Bot: a stable public HTTPS URL for the bridge
-  ([options](docs/exposing-the-bridge.md))
+Grok connectors are account-wide, so every Bot on a Grok account shares one OAuth connection. Each Bot still joins with its own invite and passes its handle as `as` on every tool call. The hub marks those identities `self_declared`: it knows a message came from that Grok account, but not which Bot sent it. Replies are bound to the original request by a single-use `reply_token`, so a Bot can only answer what it was asked.
 
-## Quickstart
+Grok Bot connectors sign in through Cursor's infrastructure, so the consent page says **Connect Cursor**. That's expected.
 
-```sh
-uv tool install git+https://github.com/iamomiid/agent-send
-agent-send init        # creates ~/.agent-bridge with a private bridge credential
-agent-send doctor      # shows configuration; never prints credentials
-```
+## How messages work
 
-### 1. Connect Hermes
+Agents use the same tools over MCP (`whoami`, `agents`, `send`, `check`, `reply`, `inbox`, `join`) and REST (`/api/v1/...`, Bearer `ast_` token).
 
-Enable the Hermes API server for the profile that should take part
-(`API_SERVER_ENABLED=true` and an `API_SERVER_KEY` in that profile), then:
+- **request:** `send(to, message)` waits up to 25 seconds. If the answer isn't there yet you get a `task_id`; call `check(task_id)` later instead of sending again. The default deadline is 5 minutes and the maximum is 1 hour, both configurable. A reply that arrives after the deadline is kept and marked late.
+- **notify:** one-way, no reply expected.
+- **reply:** answers a request using its `reply_token`. Duplicate replies are ignored.
+- **Wake-ups:** if nobody is waiting when a reply arrives (for example a Grok Bot whose turn already ended), the hub delivers the reply to the requester as a message after 15 seconds.
+- **Loops:** a request chain may be at most 4 hops deep, and no request may go back to an agent already in the chain.
+- **Retries:** failed deliveries are retried after 10 s, 30 s, 2 min, 10 min and then every 30 min until the deadline. Notifications give up after 24 hours.
 
-```sh
-agent-send configure hermes --url http://127.0.0.1:8642
-# Paste the profile's API_SERVER_KEY into the hidden prompt.
-```
+Every message an agent receives is labelled as coming from another agent, as data and not as instructions. Agents keep their own approval rules.
 
-A named profile served by a multiplexed gateway uses its own path, for example
-`--url http://127.0.0.1:8642/p/work`.
+## Security
 
-So Hermes can start conversations, copy [`skills/agent-send`](skills/agent-send/SKILL.md)
-into that profile's skills and make sure `agent-send` is on its terminal's PATH.
+- **Owner sign-in:** a passkey (WebAuthn), plus a fresh passkey check for sensitive actions such as approving connections and changing where messages are delivered. Sessions use `__Host-` cookies (Secure, HttpOnly, SameSite=Strict).
+- **Agents** authenticate with OAuth 2.1 (MCP clients) or a hub token (`ast_…`). The hub stores only hashes of agent tokens.
+- **Public endpoints are rate-limited** per IP. Agents are rate-limited per credential, and there are caps on open requests and daily messages.
+- **Outbound webhooks** go to HTTPS URLs only, never follow redirects and are signed (Standard Webhooks, or Grok's webhook key).
+- **The UI** is served with a strict CSP and `frame-ancestors 'none'`.
 
-### 2. Run the bridge
+See [SECURITY.md](SECURITY.md) for the trust model and how to report a vulnerability.
 
-```sh
-agent-send serve
-```
+## Updating
 
-It listens on `127.0.0.1:8766`. To keep it running, see
-[running as a service](docs/running-as-a-service.md).
-
-### 3. Connect Grok Bot
-
-1. Expose the bridge at a stable HTTPS URL ([how](docs/exposing-the-bridge.md)),
-   then tell Agent Send about it and write the connector settings:
-
-   ```sh
-   agent-send configure public --url https://agents.example.com
-   agent-send connector   # writes ~/.agent-bridge/grok-connector.json (private)
-   ```
-
-2. In Grok, add a **Remote HTTPS** custom connector with the `/mcp` URL and
-   `Authorization` header from that file.
-3. In the chat of the Bot that should receive requests, create a webhook routine
-   using the instruction in [docs/grok-bot.md](docs/grok-bot.md), and copy the
-   routine's webhook URL and key.
-4. Register the routine:
-
-   ```sh
-   agent-send configure grok --url https://YOUR-ROUTINE-WEBHOOK
-   # Paste the routine's webhook key into the hidden prompt.
-   ```
-
-### 4. Try it
+The hub checks this repo's releases and shows **Update available** in the UI. If you deployed with the button, your copy of the repo is connected to Workers Builds, so pull the new version and push it, and Cloudflare redeploys:
 
 ```sh
-agent-send grok "Reply with exactly PING_OK"
+git pull https://github.com/iamomiid/agent-send main && git push
 ```
 
-And from a Grok chat: *"Use agent-send's `agent_call` to ask hermes to reply
-with exactly PONG_OK."*
-
-## Usage
-
-```sh
-agent-send send <agent-id> "question"   # ask and wait up to 25 s
-agent-send grok "question"              # shorthand for send grok
-agent-send wait r_REQUEST_ID            # keep waiting; never resends
-agent-send status [r_REQUEST_ID]        # one result, or all requests
-agent-send agents                       # who can I talk to?
-agent-send configure <agent-id> --url … # add or update a route
-```
-
-Results are JSON. Exit codes: `0` completed, `2` still pending, `3`
-failed/expired/unknown, `1` local or configuration error. Useful flags:
-`--wait 0` (submit only), `--deadline` (1–3600 s, default 300), and `--key`
-(idempotent retries of the same request).
-
-Remote agents get five MCP tools:
-
-| Tool | Purpose |
-|---|---|
-| `agent_list()` | Discover yourself and the agents you may call |
-| `agent_register(description?, capabilities?)` | Optionally introduce yourself |
-| `agent_call(to, message, wait_seconds?, deadline_seconds?, idempotency_key?)` | Ask another agent |
-| `agent_await(request_id, wait_seconds?)` | Keep waiting for a pending answer |
-| `agent_reply(request_id, result)` | Answer a request delivered by webhook |
-
-Remote waits are capped at 25 seconds per call; a pending request is resumed
-with `agent_await`, never sent again.
-
-## Adding more agents
-
-`configure` accepts any ID. The type is inferred from the URL: a loopback URL is
-a Hermes profile, an HTTPS webhook is a Grok Bot routine (`--kind` overrides).
-The running bridge reloads `routes.json` automatically; no restart is needed.
-
-```sh
-agent-send configure research --url http://127.0.0.1:8642/p/research
-agent-send configure creator-analyst --url https://ROUTINE-WEBHOOK \
-  --name "Creator Analyst" --allow-from grok
-```
-
-`--allow-from grok` lets Grok Bots call that route too; without it, only local
-agents can. Grok Bot cannot relay messages to its sibling Bots from inside a
-webhook routine, so each Bot you want to reach needs its own routine and route
-([details](docs/grok-bot.md#reaching-more-grok-bots)).
-
-## How it works
-
-Everything lives in one private directory, `~/.agent-bridge/` by default
-(override with `AGENT_SEND_HOME` or `--home`):
-
-```text
-routes.json                 routes and permissions (no secrets)
-secrets.json                credentials, mode 0600
-agents/<agent-id>.json      automatic registration and optional introduction
-requests/r_<id>.json        immutable request
-state/r_<id>.json           bridge-owned delivery state
-replies/r_<id>.json         immutable answer or failure
-```
-
-Files are written atomically. A single `agent-send serve` process owns the
-mailbox, rescans it every 0.5 seconds, delivers requests and serves the MCP
-endpoint. Agents are registered automatically the first time they connect or
-send; no greeting turn is needed. See [the protocol](docs/protocol.md) for the
-file formats and state machine.
-
-## Guarantees and limits
-
-- **Answers survive restarts.** A reply file is the authority even after a crash.
-- **No blind retries.** A Hermes run is resumed by its run ID; a Grok webhook is
-  posted once. If delivery is uncertain the request becomes `unknown` and waits
-  for a late reply, its deadline, or `agent-send abandon <id>`.
-- **One active request per recipient**, in submission order. Calls that would
-  make two agents wait on each other are rejected.
-- **Identity comes from credentials**, never from what a model claims. Remote
-  callers can only call permitted targets, read their own results and answer
-  requests addressed to them.
-- **Small messages.** 32 KiB per request, 64 KiB per answer, no attachments.
-- **Grok Bots share one identity.** A Grok connector credential is account-wide,
-  so every Bot on the account authenticates as `grok`.
-- A deadline ends the wait; it does not stop remote work that already started.
-
-See [SECURITY.md](SECURITY.md) for the trust model.
-
-## Scope
-
-Agent Send is deliberately small: request/reply between agents you own, over
-files and one local process. It is not a chat room, a message bus, an agent
-marketplace or a hosted service. Adapters for other agent types are welcome to
-be discussed in an issue first.
+Data lives in the Durable Object and survives updates. Migrations run automatically.
 
 ## Development
 
 ```sh
-git clone https://github.com/iamomiid/agent-send && cd agent-send
-uv sync
-uv run pytest
-uv run ruff check . && uv run ruff format --check .
+pnpm install
+cp .dev.vars.example .dev.vars   # set SETUP_CODE; DEV_MODE=1 adds POST /api/dev/session on localhost for scripted tests
+pnpm dev                         # UI and Worker on http://localhost:5173
+pnpm test                        # Workers-runtime tests
+pnpm run typecheck
 ```
 
-Tests use temporary mailboxes, fake Hermes/Grok endpoints and the official MCP
-client; they never contact real agents. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- `src/worker/`: Worker, OAuth provider, MCP server, REST API and the `Hub` Durable Object.
+- `src/ui/`: React UI.
+- `connectors/hermes/agent-send/`: the Hermes plugin, mirrored to [agent-send-hermes](https://github.com/iamomiid/agent-send-hermes) by `scripts/publish-hermes-plugin.sh`.
+- [docs/connector-protocol.md](docs/connector-protocol.md): the WebSocket protocol used by connectors.
+- [docs/PLAN.md](docs/PLAN.md): the design and roadmap.
+
+## Roadmap
+
+OpenClaw plugin, A2A, MCP events, Claude routines and an export. See [docs/PLAN.md](docs/PLAN.md).
 
 ## License
 
-[MIT](LICENSE) © Omid Sayfun
+MIT
