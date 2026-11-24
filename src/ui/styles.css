@@ -2,42 +2,106 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Notion-style palette: warm greys, thin dividers, muted tags, one blue accent. */
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --color-bg: var(--bg);
-  --color-panel: var(--panel);
-  --color-muted: var(--muted);
+  --color-side: var(--side);
+  --color-hover: var(--hover);
   --color-line: var(--line);
   --color-fg: var(--fg);
   --color-subtle: var(--subtle);
+  --color-faint: var(--faint);
+  --color-code: var(--code);
+  --color-field: var(--field);
   --color-accent: var(--accent);
-  --color-accent-fg: var(--accent-fg);
+  --color-accent-fg: #ffffff;
+  --color-danger: var(--danger);
+  --color-tag-gray: var(--tag-gray);
+  --color-tag-gray-fg: var(--tag-gray-fg);
+  --color-tag-green: var(--tag-green);
+  --color-tag-green-fg: var(--tag-green-fg);
+  --color-tag-red: var(--tag-red);
+  --color-tag-red-fg: var(--tag-red-fg);
+  --color-tag-yellow: var(--tag-yellow);
+  --color-tag-yellow-fg: var(--tag-yellow-fg);
+  --color-tag-blue: var(--tag-blue);
+  --color-tag-blue-fg: var(--tag-blue-fg);
+  --color-tag-purple: var(--tag-purple);
+  --color-tag-purple-fg: var(--tag-purple-fg);
+  --color-tag-orange: var(--tag-orange);
+  --color-tag-orange-fg: var(--tag-orange-fg);
+  --color-dot-green: #4dab9a;
+  --color-dot-red: #e16f64;
+  --color-dot-yellow: #d9a33f;
+  --color-dot-gray: #9b9a97;
 }
 
 :root {
-  --bg: #f7f7f8;
-  --panel: #ffffff;
-  --muted: #f1f1f3;
-  --line: #e4e4e7;
-  --fg: #18181b;
-  --subtle: #71717a;
-  --accent: #4f46e5;
-  --accent-fg: #ffffff;
+  --bg: #ffffff;
+  --side: #f8f8f7;
+  --hover: rgba(55, 53, 47, 0.06);
+  --line: rgba(55, 53, 47, 0.09);
+  --fg: #37352f;
+  --subtle: #787774;
+  --faint: #9b9a97;
+  --code: #f7f6f3;
+  --field: rgba(242, 241, 238, 0.6);
+  --accent: #2383e2;
+  --danger: #eb5757;
+  --tag-gray: #e3e2e0;
+  --tag-gray-fg: #32302c;
+  --tag-green: #dbeddb;
+  --tag-green-fg: #1c3829;
+  --tag-red: #ffe2dd;
+  --tag-red-fg: #5d1715;
+  --tag-yellow: #fdecc8;
+  --tag-yellow-fg: #402c1b;
+  --tag-blue: #d3e5ef;
+  --tag-blue-fg: #183347;
+  --tag-purple: #e8deee;
+  --tag-purple-fg: #412454;
+  --tag-orange: #fadec9;
+  --tag-orange-fg: #49290e;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0c0c0f;
-    --panel: #15151a;
-    --muted: #1d1d24;
-    --line: #2a2a33;
-    --fg: #ececf1;
-    --subtle: #9a9aa6;
-    --accent: #818cf8;
-    --accent-fg: #0c0c0f;
+    --bg: #191919;
+    --side: #202020;
+    --hover: rgba(255, 255, 255, 0.055);
+    --line: rgba(255, 255, 255, 0.094);
+    --fg: rgba(255, 255, 255, 0.81);
+    --subtle: rgba(255, 255, 255, 0.46);
+    --faint: rgba(255, 255, 255, 0.32);
+    --code: #252525;
+    --field: rgba(255, 255, 255, 0.055);
+    --accent: #2383e2;
+    --danger: #e16f64;
+    --tag-gray: #373737;
+    --tag-gray-fg: rgba(255, 255, 255, 0.81);
+    --tag-green: #2b593f;
+    --tag-green-fg: rgba(255, 255, 255, 0.88);
+    --tag-red: #6e3630;
+    --tag-red-fg: rgba(255, 255, 255, 0.88);
+    --tag-yellow: #89632a;
+    --tag-yellow-fg: rgba(255, 255, 255, 0.88);
+    --tag-blue: #28456c;
+    --tag-blue-fg: rgba(255, 255, 255, 0.88);
+    --tag-purple: #492f64;
+    --tag-purple-fg: rgba(255, 255, 255, 0.88);
+    --tag-orange: #854c1d;
+    --tag-orange-fg: rgba(255, 255, 255, 0.88);
   }
 }
 
 html, body, #root { height: 100%; }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+::selection { background: rgba(35, 131, 226, 0.28); }
+
+/* Tailwind v4 resets buttons to the default cursor; everything clickable gets a pointer. */
+@layer base {
+  button:not(:disabled), [role="button"], [role="switch"], summary, select, label:has(input[type="checkbox"]), a[href] { cursor: pointer; }
+  button:disabled, select:disabled { cursor: not-allowed; }
+}

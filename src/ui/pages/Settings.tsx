@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { addPasskey, api, deviceLabel, type Settings } from "../api";
-import { Badge, Button, Card, ErrorNote, Field, Input } from "../components";
+import { Button, Callout, ErrorNote, Input, Loading, Page, SettingRow, Tag, Title, Toggle, Views, cx, timeAgo } from "../components";
 import type { OwnerStatus } from "../main";
 
 interface Stats {
@@ -37,166 +37,186 @@ function newer(latest: string | null, current: string) {
   return false;
 }
 
+type Section = "messaging" | "storage" | "connectors" | "connections" | "passkeys";
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: "messaging", label: "Messaging" },
+  { id: "storage", label: "Storage" },
+  { id: "connectors", label: "Connectors" },
+  { id: "connections", label: "Connections" },
+  { id: "passkeys", label: "Passkeys" },
+];
+
 export function SettingsPage({ status }: { status: OwnerStatus }) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [draft, setDraft] = useState<Settings | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [passkeys, setPasskeys] = useState<Passkey[]>([]);
   const [grants, setGrants] = useState<Grant[]>([]);
   const [error, setError] = useState<unknown>(null);
+  const [section, setSection] = useState<Section>("messaging");
   const [saved, setSaved] = useState(false);
 
   const load = () => {
-    void api<Settings>("GET", "/api/owner/settings").then((s) => {
-      setSettings(s);
-      setDraft(s);
-    });
+    void api<Settings>("GET", "/api/owner/settings").then(setSettings);
     void api<Stats>("GET", "/api/owner/stats").then(setStats);
     void api<Passkey[]>("GET", "/api/owner/passkeys").then(setPasskeys);
     void api<Grant[]>("GET", "/api/owner/grants").then(setGrants);
   };
   useEffect(load, []);
-  if (!settings || !draft) return <p className="p-6 text-sm text-subtle">Loading…</p>;
+  if (!settings) return <Loading />;
 
   const save = async (patch: Partial<Settings>) => {
     setError(null);
     try {
-      const s = await api<Settings>("PATCH", "/api/owner/settings", patch);
-      setSettings(s);
-      setDraft(s);
+      setSettings(await api<Settings>("PATCH", "/api/owner/settings", patch));
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {
       setError(e);
     }
   };
-  const num = (key: keyof Settings, label: string, hint?: string) => (
-    <Field label={label} hint={hint}>
-      <Input type="number" min={0} value={draft[key] as number} onChange={(e) => setDraft({ ...draft, [key]: Number(e.target.value) })} />
-    </Field>
+  const num = (key: keyof Settings, label: string, hint: string) => (
+    <SettingRow key={key} label={label} hint={hint}>
+      <NumberInput value={settings[key] as number} onSave={(v) => save({ [key]: v })} />
+    </SettingRow>
   );
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5 p-4 md:p-6">
-      <h1 className="text-lg font-semibold">Settings</h1>
-      <ErrorNote error={error} />
-
+    <Page crumbs={[{ label: "⚙️ Settings" }]} actions={saved && <span className="px-2 text-xs text-faint">Saved</span>}>
+      <Title icon="⚙️">Settings</Title>
       {stats && newer(stats.latest_version, stats.version) && (
-        <Card className="flex items-center justify-between gap-3 border-accent p-4">
-          <p className="text-sm">
-            Update available: <strong>v{stats.latest_version}</strong> (you run v{stats.version}).
-          </p>
-          <a className="text-sm underline" href="https://github.com/iamomiid/agent-send/blob/main/docs/updating.md" target="_blank" rel="noreferrer">
+        <Callout icon="✨" tone="blue">
+          Update available: <strong>v{stats.latest_version}</strong> (you run v{stats.version}).{" "}
+          <a className="underline" href="https://github.com/iamomiid/agent-send#updating" target="_blank" rel="noreferrer">
             How to update
           </a>
-        </Card>
+        </Callout>
       )}
+      <div className="md:hidden">
+        <Views value={section} onChange={setSection} options={SECTIONS} />
+      </div>
+      <div className="mt-6 flex gap-10">
+        <nav className="hidden w-36 shrink-0 flex-col gap-0.5 md:flex">
+          {SECTIONS.map((s) => (
+            <button key={s.id} onClick={() => setSection(s.id)} className={cx("h-[30px] rounded-md px-2 text-left text-sm", section === s.id ? "bg-hover font-medium" : "text-subtle hover:bg-hover")}>
+              {s.label}
+            </button>
+          ))}
+        </nav>
+        <div className="min-w-0 flex-1">
+          <h2 className="border-b border-line pb-3 text-base font-semibold">{SECTIONS.find((s) => s.id === section)!.label}</h2>
+          <ErrorNote error={error} />
 
-      <Card className="flex items-center justify-between gap-3 p-5">
-        <div>
-          <h2 className="font-medium">Pause hub</h2>
-          <p className="text-sm text-subtle">Stops all deliveries and rejects new messages until you resume.</p>
-        </div>
-        <Button variant={settings.paused ? "primary" : "danger"} onClick={() => save({ paused: !settings.paused })}>
-          {settings.paused ? "Resume" : "Pause"}
-        </Button>
-      </Card>
+          {section === "messaging" && (
+            <>
+              <SettingRow label="Pause hub" hint="Stops all deliveries and rejects new messages until you turn it off.">
+                <Toggle label="Pause hub" checked={settings.paused} onChange={(v) => void save({ paused: v })} />
+              </SettingRow>
+              {num("default_deadline_seconds", "Default deadline", "How long a request waits for a reply, in seconds.")}
+              {num("max_deadline_seconds", "Longest deadline", "The most an agent can ask for, in seconds.")}
+              {num("hop_limit", "Hop limit", "How many agents one chain of requests may span.")}
+              {num("max_open_requests", "Open requests per agent", "Unanswered requests an agent can have at once.")}
+              {num("max_messages_per_day", "Messages per agent per day", "Sends over the cap are rejected.")}
+              {num("tool_calls_per_minute", "Tool calls per minute", "Per agent.")}
+              {num("deliveries_per_minute", "Deliveries per minute", "Per recipient.")}
+            </>
+          )}
 
-      <Card className="space-y-4 p-5">
-        <h2 className="font-medium">Messaging and limits</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {num("hop_limit", "Hop limit", "How many agents one chain of requests may span.")}
-          {num("default_deadline_seconds", "Default deadline (s)")}
-          {num("max_deadline_seconds", "Maximum deadline (s)")}
-          {num("tool_calls_per_minute", "Tool calls per minute, per agent")}
-          {num("deliveries_per_minute", "Deliveries per minute, per recipient")}
-          {num("max_open_requests", "Open requests per agent")}
-          {num("max_messages_per_day", "Messages per day, per agent")}
-        </div>
-        <div className="flex items-center justify-end gap-2">
-          {saved && <span className="text-sm text-subtle">Saved</span>}
-          <Button variant="primary" onClick={() => save(draft)}>
-            Save
-          </Button>
-        </div>
-      </Card>
-
-      <Card className="space-y-4 p-5">
-        <h2 className="font-medium">Retention and storage</h2>
-        <label className="flex items-center justify-between text-sm">
-          <span>Delete old messages automatically</span>
-          <input type="checkbox" className="size-4" checked={settings.retention_days > 0} onChange={(e) => save({ retention_days: e.target.checked ? 90 : 0 })} />
-        </label>
-        {settings.retention_days > 0 && (
-          <div className="flex items-end gap-2">
-            <Field label="Keep messages for (days)">
-              <Input type="number" min={1} value={draft.retention_days} onChange={(e) => setDraft({ ...draft, retention_days: Number(e.target.value) })} />
-            </Field>
-            <Button onClick={() => save({ retention_days: Math.max(1, draft.retention_days) })}>Save</Button>
-          </div>
-        )}
-        {stats && (
-          <p className="text-sm text-subtle">
-            {stats.messages} messages, {stats.agents} agents, {(stats.database_bytes / 1024 / 1024).toFixed(1)} MB used
-            {stats.database_bytes > DO_LIMIT_BYTES * 0.8 && <Badge tone="amber">near the storage limit</Badge>}
-          </p>
-        )}
-      </Card>
-
-      <Card className="space-y-3 p-5">
-        <h2 className="font-medium">Connectors</h2>
-        <Field label="Hermes plugin source" hint="Where the Hermes setup prompt installs the plugin from: owner/repo, a Git URL, or an absolute path on the agent's machine.">
-          <Input value={draft.hermes_plugin_source} onChange={(e) => setDraft({ ...draft, hermes_plugin_source: e.target.value })} />
-        </Field>
-        <label className="flex items-center justify-between text-sm">
-          <span>Check daily for new releases</span>
-          <input type="checkbox" className="size-4" checked={settings.update_check} onChange={(e) => save({ update_check: e.target.checked })} />
-        </label>
-        <div className="flex justify-end">
-          <Button onClick={() => save({ hermes_plugin_source: draft.hermes_plugin_source.trim() })}>Save</Button>
-        </div>
-      </Card>
-
-      <Card className="space-y-3 p-5">
-        <h2 className="font-medium">OAuth connections</h2>
-        {grants.length === 0 ? (
-          <p className="text-sm text-subtle">None yet. MCP clients appear here after you approve them.</p>
-        ) : (
-          grants.map((g) => (
-            <div key={g.id} className="flex items-center justify-between gap-3 text-sm">
-              <div>
-                <span className="font-medium">{g.client_name}</span> <span className="text-subtle">{g.client_domain}</span>
-                <p className="text-xs text-subtle">
-                  {g.mode === "multi" ? "Shared" : "Single agent"} · {g.agents.join(", ") || "no agents"} · {g.status}
-                </p>
-              </div>
-              {g.status === "active" && (
-                <Button variant="danger" onClick={() => api("POST", `/api/owner/grants/${g.id}/revoke`, {}).then(load, setError)}>
-                  Revoke
-                </Button>
+          {section === "storage" && (
+            <>
+              <SettingRow label="Delete old messages" hint="Removes messages older than the number of days below.">
+                <Toggle label="Delete old messages" checked={settings.retention_days > 0} onChange={(v) => void save({ retention_days: v ? 90 : 0 })} />
+              </SettingRow>
+              {settings.retention_days > 0 && num("retention_days", "Keep messages for", "In days.")}
+              {stats && (
+                <SettingRow label="Usage" hint={`${stats.messages} messages and ${stats.agents} agents.`}>
+                  <span className="text-sm text-subtle">{(stats.database_bytes / 1024 / 1024).toFixed(1)} MB</span>
+                  {stats.database_bytes > DO_LIMIT_BYTES * 0.8 && <Tag tone="yellow">Near the limit</Tag>}
+                </SettingRow>
               )}
-            </div>
-          ))
-        )}
-      </Card>
+            </>
+          )}
 
-      <Card className="space-y-3 p-5">
-        <h2 className="font-medium">Passkeys</h2>
-        <p className="text-sm text-subtle">Passkeys work on the address they were created on (this one: {status.rpId}).</p>
-        {passkeys.map((p) => (
-          <div key={p.id} className="flex items-center justify-between text-sm">
-            <span>
-              {p.label} <span className="text-subtle">· {p.rp_id}</span>
-            </span>
-            {passkeys.length > 1 && (
-              <Button variant="ghost" onClick={() => api("DELETE", `/api/owner/passkeys/${encodeURIComponent(p.id)}`).then(load, setError)}>
-                Remove
-              </Button>
-            )}
-          </div>
-        ))}
-        <Button onClick={() => addPasskey(deviceLabel()).then(load, setError)}>Add a passkey</Button>
-      </Card>
-    </div>
+          {section === "connectors" && (
+            <>
+              <SettingRow label="Hermes plugin source" hint="Where Hermes setup prompts install the plugin from: owner/repo, a Git URL, or an absolute path on the agent's machine.">
+                <TextInput value={settings.hermes_plugin_source} onSave={(v) => save({ hermes_plugin_source: v })} />
+              </SettingRow>
+              <SettingRow label="Check for updates" hint="Looks for a new release once a day.">
+                <Toggle label="Check for updates" checked={settings.update_check} onChange={(v) => void save({ update_check: v })} />
+              </SettingRow>
+            </>
+          )}
+
+          {section === "connections" &&
+            (grants.length === 0 ? (
+              <p className="py-4 text-sm text-subtle">None yet. MCP clients and Grok accounts appear here after you approve them.</p>
+            ) : (
+              grants.map((g) => (
+                <SettingRow
+                  key={g.id}
+                  label={
+                    <>
+                      {g.client_name} {g.client_domain && <span className="text-faint">{g.client_domain}</span>}
+                    </>
+                  }
+                  hint={`${g.mode === "multi" ? "Shared" : "One agent"} · ${g.agents.join(", ") || "no agents yet"}`}
+                >
+                  {g.status === "active" ? (
+                    <Button variant="danger" onClick={() => api("POST", `/api/owner/grants/${g.id}/revoke`, {}).then(load, setError)}>
+                      Revoke
+                    </Button>
+                  ) : (
+                    <Tag>{g.status}</Tag>
+                  )}
+                </SettingRow>
+              ))
+            ))}
+
+          {section === "passkeys" && (
+            <>
+              <p className="py-3 text-[13px] text-subtle">Passkeys work only on the address they were created on. This one is {status.rpId}.</p>
+              {passkeys.map((p) => (
+                <SettingRow key={p.id} label={p.label} hint={`${p.rp_id} · last used ${timeAgo(p.last_used_at).toLowerCase()}`}>
+                  {passkeys.length > 1 && (
+                    <Button variant="ghost" onClick={() => api("DELETE", `/api/owner/passkeys/${encodeURIComponent(p.id)}`).then(load, setError)}>
+                      Remove
+                    </Button>
+                  )}
+                </SettingRow>
+              ))}
+              <div className="pt-4">
+                <Button onClick={() => addPasskey(deviceLabel()).then(load, setError)}>Add a passkey</Button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </Page>
+  );
+}
+
+/** Saves when you leave the field or press Enter. */
+function NumberInput({ value, onSave }: { value: number; onSave: (v: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const n = Number(draft);
+    if (Number.isFinite(n) && n >= 0 && n !== value) onSave(n);
+    else setDraft(String(value));
+  };
+  return <Input type="number" min={0} className="text-right" style={{ width: 88 }} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />;
+}
+
+function TextInput({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <Input
+      className="font-mono text-[13px]" style={{ width: 240 }}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => (draft.trim() && draft.trim() !== value ? onSave(draft.trim()) : setDraft(value))}
+      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+    />
   );
 }

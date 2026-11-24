@@ -1,18 +1,19 @@
 import { useState } from "react";
 import { deviceLabel, loginWithPasskey, setupWithPasskey } from "../api";
-import { Button, Card, ErrorNote, Field, Input } from "../components";
+import { Button, Callout, ErrorNote, Field, Input } from "../components";
 import type { OwnerStatus } from "../main";
 
 function Frame({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="grid min-h-full place-items-center p-4">
-      <Card className="w-full max-w-sm space-y-5 p-6">
-        <div className="flex items-center gap-2">
-          <img src="/favicon.svg" alt="" className="size-7" />
-          <h1 className="text-lg font-semibold">{title}</h1>
+    <div className="grid min-h-full place-items-center px-5 py-10">
+      <div className="w-full max-w-[320px] space-y-5">
+        <div className="space-y-2 text-center">
+          <img src="/favicon.svg" alt="" className="mx-auto size-10 rounded-lg" />
+          <h1 className="text-2xl font-bold">{title}</h1>
+          <p className="font-mono text-xs text-faint">{location.host}</p>
         </div>
         {children}
-      </Card>
+      </div>
     </div>
   );
 }
@@ -32,7 +33,7 @@ export function SetupPage({ status, onDone }: { status: OwnerStatus; onDone: () 
   }
   return (
     <Frame title={status.otherHostPasskeys > 0 && !status.hasPasskeys ? "Register a passkey for this address" : "Set up your hub"}>
-      <p className="text-sm text-subtle">
+      <p className="text-center text-sm text-subtle">
         {status.otherHostPasskeys > 0 && !status.hasPasskeys
           ? `Passkeys only work on the address they were created on, and this is ${status.rpId}. Enter your setup code to add one here.`
           : "Enter the setup code you chose when deploying, then create a passkey. You'll use it to sign in from now on."}
@@ -57,7 +58,7 @@ export function SetupPage({ status, onDone }: { status: OwnerStatus; onDone: () 
           <Input type="password" autoComplete="off" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
         </Field>
         <ErrorNote error={error} />
-        <Button variant="primary" className="w-full" busy={busy} disabled={code.length < 24}>
+        <Button variant="primary" className="h-9 w-full" busy={busy} disabled={code.length < 24}>
           Create passkey
         </Button>
       </form>
@@ -69,12 +70,10 @@ export function LoginPage({ status, onDone }: { status: OwnerStatus; onDone: () 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   return (
-    <Frame title="Sign in">
-      <p className="text-sm text-subtle">Use the passkey you registered for this hub.</p>
-      <ErrorNote error={error} />
+    <Frame title="Sign in to agent-send">
+            <ErrorNote error={error} />
       <Button
-        variant="primary"
-        className="w-full"
+        className="h-9 w-full"
         busy={busy}
         onClick={async () => {
           setBusy(true);
@@ -89,15 +88,15 @@ export function LoginPage({ status, onDone }: { status: OwnerStatus; onDone: () 
           }
         }}
       >
-        Sign in with passkey
+        🔑 Continue with passkey
       </Button>
       {!status.enrolOpen && !status.hasPasskeys && status.otherHostPasskeys > 0 && (
-        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+        <Callout icon="⚠️" tone="yellow">
           Your passkeys were created on another address, and passkeys only work where they were made. To add one for {status.rpId}, set a new SETUP_CODE secret in the Cloudflare dashboard, then reload this page.
-        </p>
+        </Callout>
       )}
       {status.enrolOpen && (
-        <p className="text-center text-xs text-subtle">
+        <p className="text-center text-xs text-faint">
           New device or address? <a className="underline" href="/setup">Use your setup code</a>
         </p>
       )}

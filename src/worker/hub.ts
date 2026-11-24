@@ -635,6 +635,7 @@ export class Hub extends DurableObject<Env> {
       completed_at: m.completed_at ? new Date(m.completed_at).toISOString() : null,
       late: m.late === 1,
       error: m.error,
+      via: m.kind === "request" ? (JSON.parse(m.chain || "[]") as string[]).filter((h) => h !== m.from_handle) : [],
     };
   }
 
@@ -854,17 +855,125 @@ export class Hub extends DurableObject<Env> {
 
   // ------------------------------------------------------- owner: messages
 
-  listThreads(limit = 100) {
-    const rows = this.all<MessageRow & { n: number; last_at: number }>(
-      `SELECT m.*, t.n, t.last_at FROM messages m
-       JOIN (SELECT thread, MAX(seq) AS last_seq, COUNT(*) AS n, MAX(created_at) AS last_at FROM messages GROUP BY thread) t
-       ON m.seq = t.last_seq ORDER BY m.seq DESC LIMIT ?`,
-      limit,
+  /** Newest threads first. Filter by participant, text, or state; page with `before` (a last-message seq). */
+  listThreads(opts: { limit?: number; before?: number; agent?: string; q?: string; view?: string } = {}) {
+    const limit = Math.min(Math.max(Math.trunc(opts.limit ?? 50) || 50, 1), 200);
+    const inner: string[] = [];
+    const innerArgs: unknown[] = [];
+    if (opts.agent) {
+      inner.push("thread IN (SELECT thread FROM messages WHERE from_handle = ? OR to_handle = ?)");
+      innerArgs.push(opts.agent, opts.agent);
+    }
+    const q = opts.q?.trim().slice(0, 200);
+    if (q) {
+      inner.push("thread IN (SELECT thread FROM messages WHERE body LIKE ? ESCAPE '\\')");
+      innerArgs.push(`%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    }
+    const outer: string[] = [];
+    const outerArgs: unknown[] = [];
+    if (opts.before) {
+      outer.push("m.seq < ?");
+      outerArgs.push(opts.before);
+    }
+    if (opts.view === "waiting") outer.push("m.kind = 'request' AND m.status IN ('queued', 'delivered')");
+    if (opts.view === "failed") outer.push("m.status IN ('failed', 'expired')");
+    const rows = this.all<MessageRow & { n: number; first_seq: number }>(
+      `SELECT m.*, t.n, t.first_seq FROM messages m
+       JOIN (SELECT thread, MAX(seq) AS last_seq, MIN(seq) AS first_seq, COUNT(*) AS n FROM messages ${inner.length ? `WHERE ${inner.join(" AND ")}` : ""} GROUP BY thread) t
+       ON m.seq = t.last_seq ${outer.length ? `WHERE ${outer.join(" AND ")}` : ""} ORDER BY m.seq DESC LIMIT ?`,
+      ...innerArgs,
+      ...outerArgs,
+      limit + 1,
     );
-    return rows.map((r) => {
+    const threads = rows.slice(0, limit).map((r) => {
       const parts = this.all<{ h: string }>("SELECT DISTINCT from_handle AS h FROM messages WHERE thread = ? UNION SELECT DISTINCT to_handle FROM messages WHERE thread = ?", r.thread, r.thread).map((x) => x.h);
-      return { thread: r.thread, participants: parts, count: r.n, last: this.messageView(r) };
+      const first = r.first_seq === r.seq ? r : this.one<MessageRow>("SELECT * FROM messages WHERE seq = ?", r.first_seq)!;
+      return { thread: r.thread, participants: parts, count: r.n, first: this.messageView(first), last: this.messageView(r) };
     });
+    return { threads, more: rows.length > limit };
+  }
+
+  /**
+   * Conversations grouped by pair of agents (either direction), newest activity first.
+   * Filter by participant, text or state; page with `before` (a last-message seq).
+   */
+  listPairs(opts: { limit?: number; before?: number; agent?: string; q?: string; view?: string } = {}) {
+    const limit = Math.min(Math.max(Math.trunc(opts.limit ?? 50) || 50, 1), 200);
+    const q = opts.q?.trim().slice(0, 200);
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (q) args.push(`%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    if (opts.agent) {
+      where.push("(g.a = ? OR g.b = ?)");
+      args.push(opts.agent, opts.agent);
+    }
+    if (q) where.push("g.hits > 0");
+    if (opts.before) {
+      where.push("g.last_seq < ?");
+      args.push(opts.before);
+    }
+    if (opts.view === "waiting") where.push("g.open > 0");
+    if (opts.view === "failed") where.push("m.status IN ('failed', 'expired')");
+    const rows = this.all<{ a: string; b: string; last_seq: number; ask_seq: number | null; exchanges: number; open: number; since: number; ask_status: string | null }>(
+      `WITH g AS (
+         SELECT CASE WHEN from_handle < to_handle THEN from_handle ELSE to_handle END AS a,
+                CASE WHEN from_handle < to_handle THEN to_handle ELSE from_handle END AS b,
+                MAX(seq) AS last_seq,
+                MAX(CASE WHEN kind != 'reply' THEN seq END) AS ask_seq,
+                SUM(CASE WHEN kind != 'reply' THEN 1 ELSE 0 END) AS exchanges,
+                SUM(CASE WHEN kind = 'request' AND status IN ('queued', 'delivered') THEN 1 ELSE 0 END) AS open,
+                MIN(created_at) AS since
+                ${q ? ", SUM(CASE WHEN body LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END) AS hits" : ""}
+         FROM messages GROUP BY a, b
+       )
+       SELECT g.a, g.b, g.last_seq, g.ask_seq, g.exchanges, g.open, g.since, m.status AS ask_status
+       FROM g LEFT JOIN messages m ON m.seq = g.ask_seq
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       ORDER BY g.last_seq DESC LIMIT ?`,
+      ...args,
+      limit + 1,
+    );
+    const pairs = rows.slice(0, limit).map((r) => {
+      const last = this.one<MessageRow>("SELECT * FROM messages WHERE seq = ?", r.last_seq)!;
+      const ask = r.ask_seq ? this.one<MessageRow>("SELECT * FROM messages WHERE seq = ?", r.ask_seq) : null;
+      const answer = ask ? this.one<MessageRow>("SELECT * FROM messages WHERE reply_to = ? ORDER BY seq LIMIT 1", ask.id) : null;
+      const state = r.open > 0 ? "waiting" : r.ask_status === "failed" ? "failed" : r.ask_status === "expired" ? "expired" : null;
+      return {
+        a: r.a,
+        b: r.b,
+        exchanges: r.exchanges,
+        open: r.open,
+        since: new Date(r.since).toISOString(),
+        state,
+        last: this.messageView(last),
+        ask: ask ? this.messageView(ask) : null,
+        answer: answer ? this.messageView(answer) : null,
+      };
+    });
+    return { pairs, more: rows.length > limit };
+  }
+
+  /** Every exchange between two agents, oldest first: requests and notifications with their replies. */
+  getPair(x: string, y: string, opts: { before?: number; limit?: number } = {}) {
+    const limit = Math.min(Math.max(Math.trunc(opts.limit ?? 30) || 30, 1), 100);
+    const between = "((from_handle = ? AND to_handle = ?) OR (from_handle = ? AND to_handle = ?))";
+    const tops = this.all<MessageRow>(
+      `SELECT * FROM messages WHERE kind != 'reply' AND ${between} ${opts.before ? "AND seq < ?" : ""} ORDER BY seq DESC LIMIT ?`,
+      ...[x, y, y, x],
+      ...(opts.before ? [opts.before] : []),
+      limit + 1,
+    );
+    const page = tops.slice(0, limit);
+    const replies = page.length
+      ? this.all<MessageRow>(`SELECT * FROM messages WHERE kind = 'reply' AND reply_to IN (${page.map(() => "?").join(",")}) ORDER BY seq`, ...page.map((m) => m.id))
+      : [];
+    const stats = this.one<{ n: number; since: number | null }>(`SELECT COUNT(*) AS n, MIN(created_at) AS since FROM messages WHERE kind != 'reply' AND ${between}`, x, y, y, x)!;
+    return {
+      messages: [...page, ...replies].sort((m1, m2) => m1.seq - m2.seq).map((m) => this.messageView(m)),
+      more: tops.length > limit,
+      exchanges: stats.n,
+      since: stats.since ? new Date(stats.since).toISOString() : null,
+    };
   }
 
   getThread(thread: string) {

@@ -208,7 +208,18 @@ export function buildApp() {
   app.get("/api/owner/mcp-prompt", (c) => guard(async () => ({ prompt: mcpPrompt(origin(c)) })));
 
   // ------------------------------------------------------- owner: messages
-  app.get("/api/owner/threads", (c) => guard(() => hubStub(c.env).listThreads()));
+  app.get("/api/owner/threads", (c) => {
+    const q = c.req.query();
+    return guard(() => hubStub(c.env).listThreads({ limit: Number(q.limit) || undefined, before: Number(q.before) || undefined, agent: q.agent || undefined, q: q.q || undefined, view: q.view || undefined }));
+  });
+  app.get("/api/owner/pairs", (c) => {
+    const q = c.req.query();
+    return guard(() => hubStub(c.env).listPairs({ limit: Number(q.limit) || undefined, before: Number(q.before) || undefined, agent: q.agent || undefined, q: q.q || undefined, view: q.view || undefined }));
+  });
+  app.get("/api/owner/pairs/:a/:b", (c) => {
+    const q = c.req.query();
+    return guard(() => hubStub(c.env).getPair(c.req.param("a"), c.req.param("b"), { before: Number(q.before) || undefined, limit: Number(q.limit) || undefined }));
+  });
   app.get("/api/owner/threads/:thread", (c) => guard(() => hubStub(c.env).getThread(c.req.param("thread"))));
   app.post("/api/owner/send", async (c) => {
     const body = await c.req.json();

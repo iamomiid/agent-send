@@ -51,6 +51,68 @@ describe("hub messaging", () => {
     expect(done.from).toBe("alpha");
   });
 
+  it("lists threads with the opening message, filters and paging", async () => {
+    const h = hub();
+    const a = await apiAgent(h, "Alpha");
+    await apiAgent(h, "Beta");
+    await h.ownerSend({ to: "alpha", message: "Check 100% of posts" });
+    await h.ownerSend({ to: "beta", message: "Draft a thread" });
+    const inbox = await h.inbox(a.p, undefined, {});
+    const req = inbox.messages[0]!;
+    await h.reply(a.p, undefined, { request_id: req.request_id!, reply_token: req.reply_token!, result: "none found" });
+
+    const all = await h.listThreads();
+    expect(all.threads).toHaveLength(2);
+    expect(all.more).toBe(false);
+    const alpha = all.threads.find((t) => t.participants.includes("alpha"))!;
+    expect(alpha.first.message).toBe("Check 100% of posts");
+    expect(alpha.last.message).toBe("none found");
+
+    expect((await h.listThreads({ agent: "beta" })).threads.map((t) => t.first.message)).toEqual(["Draft a thread"]);
+    expect((await h.listThreads({ q: "100%" })).threads).toHaveLength(1);
+    expect((await h.listThreads({ q: "%" })).threads).toHaveLength(1);
+    expect((await h.listThreads({ view: "waiting" })).threads.map((t) => t.first.message)).toEqual(["Draft a thread"]);
+
+    const page1 = await h.listThreads({ limit: 1 });
+    expect(page1.more).toBe(true);
+    const page2 = await h.listThreads({ limit: 1, before: page1.threads[0]!.last.seq });
+    expect(page2.threads[0]!.thread).not.toBe(page1.threads[0]!.thread);
+    expect(page2.more).toBe(false);
+  });
+
+  it("groups conversations by pair of agents and pages a pair's history", async () => {
+    const h = hub();
+    const a = await apiAgent(h, "Alpha");
+    const b = await apiAgent(h, "Beta");
+    // Three separate requests alpha -> beta (each a new thread), one answered, plus one owner -> alpha.
+    for (const text of ["first ask", "second ask", "third ask"]) await h.send(a.p, undefined, { to: "beta", message: text });
+    const inbox = await h.inbox(b.p, undefined, {});
+    const third = inbox.messages.find((m) => m.message === "third ask")!;
+    await h.reply(b.p, undefined, { request_id: third.request_id!, reply_token: third.reply_token!, result: "third answer" });
+    await h.ownerSend({ to: "alpha", message: "hello" });
+
+    const { pairs, more } = await h.listPairs();
+    expect(more).toBe(false);
+    expect(pairs.map((p) => `${p.a}|${p.b}`)).toEqual(["alpha|owner", "alpha|beta"]);
+    const ab = pairs[1]!;
+    expect(ab.exchanges).toBe(3);
+    expect(ab.ask!.message).toBe("third ask");
+    expect(ab.answer!.message).toBe("third answer");
+    expect(ab.state).toBe("waiting"); // first and second are still open
+
+    expect((await h.listPairs({ agent: "beta" })).pairs).toHaveLength(1);
+    expect((await h.listPairs({ q: "third answer" })).pairs.map((p) => p.b)).toEqual(["beta"]);
+    expect((await h.listPairs({ limit: 1 })).more).toBe(true);
+
+    const page1 = await h.getPair("beta", "alpha", { limit: 2 });
+    expect(page1.exchanges).toBe(3);
+    expect(page1.more).toBe(true);
+    expect(page1.messages.map((m) => m.message)).toEqual(["second ask", "third ask", "third answer"]);
+    const page2 = await h.getPair("alpha", "beta", { limit: 2, before: page1.messages[0]!.seq });
+    expect(page2.messages.map((m) => m.message)).toEqual(["first ask"]);
+    expect(page2.more).toBe(false);
+  });
+
   it("resolves a waiting sender as soon as the reply arrives", async () => {
     const h = hub();
     const a = await apiAgent(h, "Alpha");

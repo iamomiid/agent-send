@@ -107,12 +107,26 @@ export interface Message {
   completed_at: string | null;
   late: boolean;
   error: string | null;
+  via: string[];
+}
+
+export interface PairSummary {
+  a: string;
+  b: string;
+  exchanges: number;
+  open: number;
+  since: string;
+  state: "waiting" | "failed" | "expired" | null;
+  last: Message;
+  ask: Message | null;
+  answer: Message | null;
 }
 
 export interface ThreadSummary {
   thread: string;
   participants: string[];
   count: number;
+  first: Message;
   last: Message;
 }
 

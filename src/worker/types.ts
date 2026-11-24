@@ -98,6 +98,8 @@ export interface MessageView {
   completed_at: string | null;
   late: boolean;
   error: string | null;
+  /** For requests: the agents already waiting upstream when this was sent (the chain it belongs to). */
+  via: string[];
 }
 
 /** Result of `send` and `check`, shaped like an MCP Tasks handle. */

@@ -1,81 +1,154 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, type Agent, type Runtime } from "../api";
-import { Badge, Button, Card, CopyBlock, Empty, ErrorNote, Field, Input, Textarea, cx, runtimeLabel, statusTone, timeAgo, useLive } from "../components";
-import { Link, navigate } from "../main";
-
-function useAgents() {
-  const [agents, setAgents] = useState<Agent[] | null>(null);
-  const load = useCallback(() => api<Agent[]>("GET", "/api/owner/agents").then(setAgents), []);
-  useEffect(() => {
-    void load();
-  }, [load]);
-  useLive((e) => {
-    if (e.type === "agent") setAgents((prev) => (prev ? (prev.some((a) => a.handle === e.agent.handle) ? prev.map((a) => (a.handle === e.agent.handle ? e.agent : a)) : [...prev, e.agent]) : prev));
-  });
-  return { agents, reload: load };
-}
+import {
+  Button,
+  Callout,
+  CopyBlock,
+  Empty,
+  ErrorNote,
+  Field,
+  H3,
+  InlineInput,
+  Input,
+  Loading,
+  Page,
+  Prop,
+  Props,
+  SettingRow,
+  Tag,
+  Title,
+  Toggle,
+  Views,
+  Avatar,
+  clock,
+  cx,
+  deliveryState,
+  runtimeLabel,
+  runtimeTone,
+  timeAgo,
+  useLive,
+} from "../components";
+import { useAgents } from "../data";
+import { Link, navigate } from "../router";
+import { pairPath } from "./Conversations";
 
 export function AgentsPage({ path }: { path: string }) {
   const { agents, reload } = useAgents();
   if (path === "/agents/new") return <AddAgent agents={agents ?? []} />;
   const handle = path.startsWith("/agents/") ? decodeURIComponent(path.slice(8)) : null;
   if (handle) {
-    const a = agents?.find((x) => x.handle === handle);
-    if (!agents) return <p className="p-6 text-sm text-subtle">Loading…</p>;
-    if (!a) return <Empty title="No such agent" />;
-    return <AgentDetail agent={a} onChange={reload} />;
+    if (!agents) return <Loading />;
+    const a = agents.find((x) => x.handle === handle);
+    if (!a)
+      return (
+        <Page crumbs={[{ label: "🤖 Agents", to: "/agents" }]}>
+          <Empty title="No such agent" />
+        </Page>
+      );
+    return <AgentDetail key={a.handle} agent={a} onChange={() => void reload()} />;
   }
-  const visible = (agents ?? []).filter((a) => a.handle !== "owner");
+  return <AgentList agents={agents} />;
+}
+
+// ---- list
+
+function AgentList({ agents }: { agents: Agent[] | null }) {
+  const [view, setView] = useState<"all" | "attention">("all");
+  const all = (agents ?? []).filter((a) => a.handle !== "owner");
+  const needsAttention = (a: Agent) => ["red", "yellow"].includes(deliveryState(a).tone) && a.status !== "revoked";
+  const visible = view === "all" ? all : all.filter(needsAttention);
+  const reachable = all.filter((a) => a.status === "active" && deliveryState(a).tone !== "red" && deliveryState(a).tone !== "yellow").length;
+  const th = "border-b border-line px-2 py-1.5 text-left font-normal text-subtle whitespace-nowrap";
+  const td = "border-b border-line px-2 py-2";
+
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-4 md:p-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Agents</h1>
+    <Page crumbs={[{ label: "🤖 Agents" }]}>
+      <Title icon="🤖">Agents</Title>
+      <p className="text-sm text-subtle">{agents ? `${all.length} ${all.length === 1 ? "agent" : "agents"} · ${reachable} reachable now` : " "}</p>
+      <Views
+        value={view}
+        onChange={setView}
+        options={[
+          { id: "all", label: "All" },
+          { id: "attention", label: `Needs attention${all.filter(needsAttention).length ? ` · ${all.filter(needsAttention).length}` : ""}` },
+        ]}
+      >
         <Button variant="primary" onClick={() => navigate("/agents/new")}>
-          Add agent
+          New
         </Button>
-      </header>
+      </Views>
       {agents === null ? (
-        <p className="text-sm text-subtle">Loading…</p>
+        <Loading />
       ) : visible.length === 0 ? (
-        <Card>
+        all.length === 0 ? (
           <Empty title="No agents yet">Add a Grok Bot, a Hermes profile or any MCP client. Setup is one prompt you paste into the agent.</Empty>
-        </Card>
+        ) : (
+          <Empty title="Everything is working" />
+        )
       ) : (
-        <Card className="divide-y divide-line">
-          {visible.map((a) => (
-            <Link key={a.handle} to={`/agents/${a.handle}`} className="flex items-center gap-3 px-4 py-3 hover:bg-muted">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{a.name}</span>
-                  <span className="text-sm text-subtle">@{a.handle}</span>
-                </div>
-                <p className="truncate text-sm text-subtle">{a.description || runtimeLabel[a.runtime]}</p>
-              </div>
-              <div className="flex shrink-0 flex-wrap justify-end gap-1">
-                <Badge>{runtimeLabel[a.runtime]}</Badge>
-                <DeliveryBadge a={a} />
-                {a.status !== "active" && <Badge tone={statusTone(a.status)}>{a.status}</Badge>}
-              </div>
-            </Link>
-          ))}
-        </Card>
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr>
+              <th className={th}>
+                <span className="mr-1.5 text-xs text-faint">Aa</span>Name
+              </th>
+              <th className={cx(th, "hidden sm:table-cell")}>
+                <span className="mr-1.5 text-xs text-faint">@</span>Handle
+              </th>
+              <th className={th}>
+                <span className="mr-1.5 text-xs text-faint">◉</span>Runtime
+              </th>
+              <th className={th}>
+                <span className="mr-1.5 text-xs text-faint">◎</span>Delivery
+              </th>
+              <th className={cx(th, "hidden md:table-cell")}>
+                <span className="mr-1.5 text-xs text-faint">◷</span>Last active
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((a) => {
+              const d = deliveryState(a);
+              return (
+                <tr key={a.handle} className="cursor-pointer hover:bg-hover" onClick={() => navigate(`/agents/${a.handle}`)}>
+                  <td className={td}>
+                    <span className="flex items-center gap-2">
+                      <Avatar name={a.name} />
+                      <span className="truncate font-medium">{a.name}</span>
+                    </span>
+                  </td>
+                  <td className={cx(td, "hidden font-mono text-[13px] text-subtle sm:table-cell")}>{a.handle}</td>
+                  <td className={td}>
+                    <Tag tone={runtimeTone[a.runtime]}>{runtimeLabel[a.runtime]}</Tag>
+                  </td>
+                  <td className={td}>
+                    <Tag tone={d.tone} dot>
+                      {d.label}
+                    </Tag>
+                  </td>
+                  <td className={cx(td, "hidden text-subtle md:table-cell")}>{timeAgo(a.last_seen_at)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       )}
-    </div>
+      {agents !== null && (
+        <Link to="/agents/new" className="-mx-0 block rounded-md px-2 py-2 text-sm text-faint hover:bg-hover">
+          + New agent
+        </Link>
+      )}
+    </Page>
   );
 }
 
-function DeliveryBadge({ a }: { a: Agent }) {
-  if (a.delivery.method === "connector") return <Badge tone={a.delivery.connected ? "green" : "amber"}>{a.delivery.connected ? "connected" : "offline"}</Badge>;
-  if (a.delivery.method === "webhook") return <Badge tone="green">webhook</Badge>;
-  if (a.runtime === "grok") return <Badge tone="amber">needs webhook</Badge>;
-  return <Badge>inbox</Badge>;
-}
+// ---- add agent
 
-const RUNTIMES: { id: Runtime; title: string; blurb: string }[] = [
-  { id: "grok", title: "Grok Bot", blurb: "A Bot in Grok. It joins through the agent-send connector and gets woken by its own routine." },
-  { id: "hermes", title: "Hermes profile", blurb: "A Hermes Agent profile. A small plugin connects out to the hub, so no tunnel is needed." },
-  { id: "mcp", title: "MCP client", blurb: "Claude, ChatGPT, Cursor, Claude Code, Codex… anything that adds a remote MCP server." },
-  { id: "api", title: "Script or API", blurb: "Anything that can make HTTP requests, using a token." },
+const RUNTIMES: { id: Runtime; title: string; blurb: string; placeholder: string }[] = [
+  { id: "grok", title: "Grok Bot", blurb: "A Bot in Grok. It joins through the agent-send connector and is woken by its own routine.", placeholder: "Creator Analyst" },
+  { id: "hermes", title: "Hermes profile", blurb: "A Hermes profile. A small plugin connects out to the hub, so no tunnel is needed.", placeholder: "CMO" },
+  { id: "mcp", title: "MCP client", blurb: "Claude, ChatGPT, Cursor, Claude Code, Codex… anything that adds a remote MCP server.", placeholder: "" },
+  { id: "api", title: "Script / API", blurb: "Anything that can make HTTP requests, using a token.", placeholder: "Nightly report" },
 ];
 
 function AddAgent({ agents }: { agents: Agent[] }) {
@@ -88,107 +161,114 @@ function AddAgent({ agents }: { agents: Agent[] }) {
   const [joined, setJoined] = useState<string | null>(null);
 
   useLive((e) => {
-    if (e.type === "invite" && result && (e.invite as { id: string; used_by: string | null }).id === result.invite.id) {
+    if (e.type === "invite" && result && (e.invite as { id: string }).id === result.invite.id) {
       const used = (e.invite as { used_by: string | null }).used_by;
       if (used) setJoined(used);
     }
   });
   useEffect(() => {
-    if (runtime === "mcp") void api<{ prompt: string }>("GET", "/api/owner/mcp-prompt").then((r) => setMcpPrompt(r.prompt));
-  }, [runtime]);
+    if (runtime === "mcp" && !mcpPrompt) void api<{ prompt: string }>("GET", "/api/owner/mcp-prompt").then((r) => setMcpPrompt(r.prompt));
+  }, [runtime, mcpPrompt]);
 
-  const joinedAgent = joined ? agents.find((a) => a.handle === joined) : undefined;
+  const meta = RUNTIMES.find((r) => r.id === runtime);
+  const locked = !!result;
+  const create = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await api("POST", "/api/owner/invites", { runtime, ...form }));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5 p-4 md:p-6">
-      <header className="flex items-center gap-3">
-        <button className="text-sm text-subtle" onClick={() => navigate("/agents")}>
-          ← Agents
-        </button>
-        <h1 className="text-lg font-semibold">Add agent</h1>
-      </header>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {RUNTIMES.map((r) => (
-          <button
-            key={r.id}
-            disabled={!!result}
-            onClick={() => setRuntime(r.id)}
-            className={cx("rounded-lg border bg-panel p-4 text-left disabled:opacity-60", runtime === r.id ? "border-accent ring-1 ring-accent" : "border-line hover:bg-muted")}
-          >
-            <span className="block font-medium">{r.title}</span>
-            <span className="text-sm text-subtle">{r.blurb}</span>
-          </button>
-        ))}
-      </div>
-
-      {runtime === "mcp" && (
-        <Card className="space-y-3 p-5">
-          <h2 className="font-medium">Paste this into the agent (or follow it yourself)</h2>
-          {mcpPrompt ? <CopyBlock text={mcpPrompt} rows={9} /> : <p className="text-sm text-subtle">Loading…</p>}
-          <p className="text-sm text-subtle">When it connects, a sign-in page opens here. You approve it with your passkey and choose its handle. Then it appears in Agents.</p>
-        </Card>
+    <Page crumbs={[{ label: "🤖 Agents", to: "/agents" }, { label: "New agent" }]}>
+      {runtime === "mcp" ? (
+        <Title>Connect an MCP client</Title>
+      ) : (
+        <InlineInput
+          autoFocus
+          disabled={locked}
+          className="text-[30px] leading-tight font-bold tracking-[-0.01em] md:text-[38px]"
+          placeholder={meta?.placeholder ? `New agent, e.g. ${meta.placeholder}` : "New agent"}
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+          onKeyDown={(e) => e.key === "Enter" && runtime && form.name.trim() && !locked && void create()}
+        />
       )}
+      <Props>
+        <Prop icon="◉" label="Runtime">
+          {RUNTIMES.map((r) => (
+            <button key={r.id} disabled={locked} onClick={() => setRuntime(r.id)} className={cx("rounded transition-opacity", runtime && runtime !== r.id && "opacity-45 hover:opacity-100")}>
+              <Tag tone={runtime === r.id ? runtimeTone[r.id] : "gray"}>{r.title}</Tag>
+            </button>
+          ))}
+        </Prop>
+        {runtime && runtime !== "mcp" && (
+          <>
+            <Prop icon="@" label="Handle">
+              <InlineInput disabled={locked} className="font-mono text-[13px]" placeholder="Derived from the name" value={form.handle} onChange={(e) => setForm({ ...form, handle: e.target.value })} />
+            </Prop>
+            <Prop icon="≡" label="Description">
+              <InlineInput disabled={locked} placeholder="What it's good at (shown to other agents)" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            </Prop>
+          </>
+        )}
+      </Props>
+      {meta && <p className="text-sm text-subtle">{meta.blurb}</p>}
+      {!runtime && <p className="text-sm text-faint">Pick a runtime to start.</p>}
 
       {runtime && runtime !== "mcp" && !result && (
-        <Card className="space-y-4 p-5">
-          <Field label="Name" hint="How this agent shows up to you and other agents.">
-            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={runtime === "grok" ? "Creator Analyst" : runtime === "hermes" ? "CMO" : "Nightly report"} autoFocus />
-          </Field>
-          <Field label="Handle (optional)" hint="Permanent. Leave empty to derive it from the name.">
-            <Input value={form.handle} onChange={(e) => setForm({ ...form, handle: e.target.value })} />
-          </Field>
-          <Field label="Description (optional)" hint="Tells other agents what this one is good at.">
-            <Textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-          </Field>
+        <div className="mt-5">
           <ErrorNote error={error} />
-          <div className="flex justify-end">
-            <Button
-              variant="primary"
-              busy={busy}
-              disabled={!form.name.trim()}
-              onClick={async () => {
-                setBusy(true);
-                setError(null);
-                try {
-                  setResult(await api("POST", "/api/owner/invites", { runtime, ...form }));
-                } catch (e) {
-                  setError(e);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Create setup prompt
-            </Button>
-          </div>
-        </Card>
+          <Button variant="primary" busy={busy} disabled={!form.name.trim()} onClick={() => void create()}>
+            Create setup prompt
+          </Button>
+        </div>
+      )}
+
+      {runtime === "mcp" && (
+        <>
+          <H3>Paste this into the agent</H3>
+          {mcpPrompt ? <CopyBlock text={mcpPrompt} label="Prompt" /> : <Loading />}
+          <Callout icon="🔑">When it connects, a sign-in page opens here. Approve it with your passkey and choose its handle. Then it shows up in Agents.</Callout>
+        </>
       )}
 
       {result && (
-        <Card className="space-y-4 p-5">
-          <div>
-            <h2 className="font-medium">1. Paste this into {runtime === "hermes" ? "a chat with the Hermes profile you want to connect" : runtime === "grok" ? "a chat with that Bot" : "the agent"}</h2>
-            <p className="text-sm text-subtle">It contains a single-use invite that expires {new Date(result.invite.expires_at).toLocaleTimeString()}.</p>
-          </div>
-          <CopyBlock text={result.prompt} rows={14} />
-          <Steps runtime={runtime!} joined={joinedAgent ?? null} joinedHandle={joined} />
-        </Card>
+        <>
+          <H3>Paste this into {runtime === "hermes" ? "a chat with the Hermes profile you want to connect" : runtime === "grok" ? "a chat with that Bot" : "the agent"}</H3>
+          <CopyBlock text={result.prompt} label={`Prompt · single use · expires at ${clock(result.invite.expires_at)}`} />
+          <Progress runtime={runtime!} joined={agents.find((a) => a.handle === joined) ?? null} joinedHandle={joined} />
+        </>
       )}
+    </Page>
+  );
+}
+
+function Todo({ done, waiting, children }: { done: boolean; waiting?: boolean; children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2.5 py-1 text-sm">
+      {waiting && !done ? (
+        <span className="size-4 shrink-0 animate-spin rounded-full border-2 border-line border-t-subtle" />
+      ) : (
+        <span className={cx("grid size-4 shrink-0 place-items-center rounded-[3px]", done ? "bg-accent" : "shadow-[inset_0_0_0_1.5px_var(--fg)] opacity-70")}>
+          {done && (
+            <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="#fff" strokeWidth="4">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          )}
+        </span>
+      )}
+      <span className={done ? "text-faint line-through" : ""}>{children}</span>
     </div>
   );
 }
 
-function Check({ done, children }: { done: boolean; children: React.ReactNode }) {
-  return (
-    <li className="flex items-start gap-2 text-sm">
-      <span className={cx("mt-0.5 grid size-4 shrink-0 place-items-center rounded-full text-[10px]", done ? "bg-emerald-500 text-white" : "border border-line")}>{done ? "✓" : ""}</span>
-      <span className={done ? "" : "text-subtle"}>{children}</span>
-    </li>
-  );
-}
-
-function Steps({ runtime, joined, joinedHandle }: { runtime: Runtime; joined: Agent | null; joinedHandle: string | null }) {
+function Progress({ runtime, joined, joinedHandle }: { runtime: Runtime; joined: Agent | null; joinedHandle: string | null }) {
   const [ping, setPing] = useState<{ thread: string } | null>(null);
   const [pong, setPong] = useState<string | null>(null);
   const deliveryReady = !!joined && (runtime === "grok" ? joined.delivery.method === "webhook" : runtime === "hermes" ? joined.delivery.connected : true);
@@ -200,23 +280,36 @@ function Steps({ runtime, joined, joinedHandle }: { runtime: Runtime; joined: Ag
   }, [deliveryReady, joined, ping, runtime]);
 
   return (
-    <div className="space-y-3">
-      <h2 className="font-medium">2. Watch it connect</h2>
-      <ul className="space-y-2">
-        <Check done={!!joinedHandle}>{joinedHandle ? `Joined as @${joinedHandle}` : "Waiting for the agent to join…"}</Check>
-        {runtime === "grok" && <Check done={deliveryReady}>Paste the routine's webhook URL and key below</Check>}
-        {runtime === "hermes" && <Check done={deliveryReady}>{deliveryReady ? "Plugin connected" : "Waiting for the Hermes plugin to connect (after its gateway restarts)…"}</Check>}
-        {runtime !== "api" && <Check done={!!pong}>{pong ? `Connection test answered: “${pong.slice(0, 80)}”` : ping ? "Connection test sent, waiting for the answer…" : "Connection test"}</Check>}
-      </ul>
-      {runtime === "grok" && joined && !deliveryReady && <WebhookForm agent={joined} />}
+    <>
+      <H3>Progress</H3>
+      <Todo done>Invite created</Todo>
+      <Todo done={!!joinedHandle} waiting>
+        {joinedHandle ? `Joined as @${joinedHandle}` : "Waiting for the agent to join…"}
+      </Todo>
+      {runtime === "grok" && <Todo done={deliveryReady}>Paste the routine's webhook URL and key</Todo>}
+      {runtime === "hermes" && (
+        <Todo done={deliveryReady} waiting={!!joinedHandle}>
+          {deliveryReady ? "Plugin connected" : "Waiting for the Hermes plugin to connect…"}
+        </Todo>
+      )}
+      {runtime !== "api" && (
+        <Todo done={!!pong} waiting={!!ping}>
+          {pong ? `Connection test answered: “${pong.slice(0, 80)}”` : ping ? "Connection test sent, waiting for the answer…" : "Connection test"}
+        </Todo>
+      )}
+      {runtime === "grok" && joined && !deliveryReady && (
+        <div className="mt-4">
+          <WebhookForm agent={joined} />
+        </div>
+      )}
       {joined && (
-        <p className="text-sm">
-          <Link to={`/agents/${joined.handle}`} className="underline">
-            Open {joined.name}
+        <p className="mt-5 text-sm">
+          <Link to={`/agents/${joined.handle}`} className="text-subtle underline hover:text-fg">
+            Open {joined.name} →
           </Link>
         </p>
       )}
-    </div>
+    </>
   );
 }
 
@@ -228,7 +321,7 @@ function WebhookForm({ agent, onSaved }: { agent: Agent; onSaved?: () => void })
   const [busy, setBusy] = useState(false);
   return (
     <form
-      className="space-y-3 rounded-md border border-line p-4"
+      className="space-y-3 rounded-md bg-code p-4"
       onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
@@ -255,11 +348,13 @@ function WebhookForm({ agent, onSaved }: { agent: Agent; onSaved?: () => void })
       </Field>
       <ErrorNote error={error} />
       <Button variant="primary" busy={busy} disabled={!url.trim() || (!secret.trim() && !agent.delivery.has_secret)}>
-        Save (confirm with passkey)
+        Save with passkey
       </Button>
     </form>
   );
 }
+
+// ---- detail
 
 function AgentDetail({ agent, onChange }: { agent: Agent; onChange: () => void }) {
   const [edit, setEdit] = useState({ name: agent.name, description: agent.description });
@@ -285,104 +380,134 @@ function AgentDetail({ agent, onChange }: { agent: Agent; onChange: () => void }
     }
   };
   const patch = (body: object) => act("patch", () => api("PATCH", `/api/owner/agents/${agent.handle}`, body));
+  const saveText = (key: "name" | "description") => {
+    const value = edit[key].trim();
+    if (value === agent[key] || (key === "name" && !value)) return setEdit({ ...edit, [key]: agent[key] });
+    void patch({ [key]: value });
+  };
   const revoked = agent.status === "revoked";
+  const d = deliveryState(agent);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5 p-4 md:p-6">
-      <header className="flex flex-wrap items-center gap-3">
-        <button className="text-sm text-subtle" onClick={() => navigate("/agents")}>
-          ← Agents
-        </button>
-        <h1 className="text-lg font-semibold">{agent.name}</h1>
-        <span className="text-subtle">@{agent.handle}</span>
-        <Badge>{runtimeLabel[agent.runtime]}</Badge>
-        <Badge tone={agent.trust === "verified" ? "green" : "amber"}>{agent.trust === "verified" ? "verified identity" : "self-declared"}</Badge>
-        <Badge tone={statusTone(agent.status)}>{agent.status}</Badge>
-      </header>
+    <Page crumbs={[{ label: "🤖 Agents", to: "/agents" }, { label: agent.name }]}>
+      <InlineInput
+        disabled={revoked}
+        className="text-[30px] leading-tight font-bold tracking-[-0.01em] md:text-[38px]"
+        value={edit.name}
+        onChange={(e) => setEdit({ ...edit, name: e.target.value })}
+        onBlur={() => saveText("name")}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      />
+      <InlineInput
+        disabled={revoked}
+        className="mt-1 text-sm text-subtle"
+        placeholder="Add a description other agents will see…"
+        value={edit.description}
+        onChange={(e) => setEdit({ ...edit, description: e.target.value })}
+        onBlur={() => saveText("description")}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      />
+      <Props>
+        <Prop icon="@" label="Handle">
+          <span className="font-mono text-[13px]">{agent.handle}</span>
+        </Prop>
+        <Prop icon="◉" label="Runtime">
+          <Tag tone={runtimeTone[agent.runtime]}>{runtimeLabel[agent.runtime]}</Tag>
+        </Prop>
+        <Prop icon="◎" label="Delivery">
+          <Tag tone={d.tone} dot>
+            {d.label}
+          </Tag>
+        </Prop>
+        <Prop icon="✓" label="Identity">
+          {agent.trust === "verified" ? "Verified" : <span title="It shares one connection with other Bots on the same Grok account">Self-declared (shared connection)</span>}
+        </Prop>
+        <Prop icon="◷" label="Last active">
+          {timeAgo(agent.last_seen_at)}
+        </Prop>
+        <Prop icon="💬" label="Conversations">
+          <Link to={`/?agent=${encodeURIComponent(agent.handle)}`} className="text-subtle underline decoration-line underline-offset-2 hover:text-fg">
+            View conversations
+          </Link>
+        </Prop>
+        <Prop icon="+" label="Added">
+          {new Date(agent.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+        </Prop>
+      </Props>
       <ErrorNote error={error} />
 
-      <Card className="space-y-3 p-5">
-        <h2 className="font-medium">Profile</h2>
-        <Field label="Name">
-          <Input value={edit.name} disabled={revoked} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
-        </Field>
-        <Field label="Description">
-          <Textarea rows={2} value={edit.description} disabled={revoked} onChange={(e) => setEdit({ ...edit, description: e.target.value })} />
-        </Field>
-        <div className="flex items-center justify-between text-sm text-subtle">
-          <span>Last seen {timeAgo(agent.last_seen_at)}</span>
-          <Button busy={busy === "patch"} disabled={revoked} onClick={() => patch(edit)}>
-            Save
-          </Button>
+      <H3>Delivery</H3>
+      <p className="text-sm text-subtle">
+        {agent.delivery.method === "connector"
+          ? agent.delivery.connected
+            ? "Its connector is online, so messages arrive instantly."
+            : "Its connector is offline. Messages wait until it reconnects or their deadline passes."
+          : agent.delivery.method === "webhook"
+            ? `Messages are POSTed to ${agent.delivery.url}.`
+            : "Messages wait in its inbox until it checks."}
+      </p>
+      {(agent.runtime === "grok" || agent.delivery.method === "webhook") && !revoked && (
+        <div className="mt-3">
+          <WebhookForm agent={agent} onSaved={onChange} />
         </div>
-      </Card>
-
-      <Card className="space-y-3 p-5">
-        <h2 className="font-medium">Delivery</h2>
-        <p className="text-sm text-subtle">
-          {agent.delivery.method === "connector"
-            ? agent.delivery.connected
-              ? "Its connector is online. Messages are delivered instantly."
-              : "Its connector is offline. Messages wait until it reconnects or their deadline passes."
-            : agent.delivery.method === "webhook"
-              ? `Messages are POSTed to ${agent.delivery.url}.`
-              : "Messages wait in its inbox until it checks."}
-        </p>
-        {(agent.runtime === "grok" || agent.delivery.method === "webhook") && !revoked && <WebhookForm agent={agent} onSaved={onChange} />}
-        {routine && (
-          <details className="text-sm">
-            <summary className="cursor-pointer text-subtle">Routine instruction for this Bot</summary>
-            <div className="mt-2">
-              <CopyBlock text={routine} rows={8} />
-            </div>
-          </details>
-        )}
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={revoked || agent.status !== "active"} onClick={() => act("ping", async () => navigate(`/threads/${encodeURIComponent((await api<{ thread: string }>("POST", `/api/owner/agents/${agent.handle}/ping`, {})).thread)}`))}>
-            Send connection test
-          </Button>
-        </div>
-      </Card>
-
-      <Card className="space-y-3 p-5">
-        <h2 className="font-medium">Permissions</h2>
-        {[
-          ["can_send", "Can send messages", agent.can_send],
-          ["can_receive", "Can receive messages", agent.can_receive],
-          ["hidden", "Hidden from other agents' directory", agent.hidden],
-        ].map(([key, label, value]) => (
-          <label key={key as string} className="flex items-center justify-between text-sm">
-            <span>{label as string}</span>
-            <input type="checkbox" className="size-4 accent-[var(--accent)]" disabled={revoked} checked={!!value} onChange={(e) => patch({ [key as string]: e.target.checked })} />
-          </label>
-        ))}
-      </Card>
-
-      <Card className="space-y-3 p-5">
-        <h2 className="font-medium">Access</h2>
-        {token && (
-          <div className="space-y-2">
-            <p className="text-sm">New token. It's shown only once; update the agent's configuration with it.</p>
-            <CopyBlock text={token} rows={2} />
+      )}
+      {routine && (
+        <details className="group mt-3 text-sm">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md py-1 hover:bg-hover">
+            <span className="w-4 text-center text-[10px] text-faint transition-transform group-open:rotate-90">▶</span>
+            Routine instruction for this Bot
+          </summary>
+          <div className="pl-5">
+            <CopyBlock text={routine} label="Instruction" />
           </div>
-        )}
-        <div className="flex flex-wrap gap-2">
-          {agent.status === "active" && (
-            <Button busy={busy === "pause"} onClick={() => act("pause", () => api("PATCH", `/api/owner/agents/${agent.handle}`, { status: "paused" }))}>
-              Pause
+        </details>
+      )}
+      <div className="mt-3">
+        <Button disabled={revoked || agent.status !== "active"} onClick={() => act("ping", async () => {
+              await api("POST", `/api/owner/agents/${agent.handle}/ping`, {});
+              navigate(pairPath("owner", agent.handle));
+            })}>
+          Send connection test
+        </Button>
+      </div>
+
+      <H3>Permissions</H3>
+      {(
+        [
+          ["can_send", "Can send messages", "Lets it ask and notify other agents.", agent.can_send],
+          ["can_receive", "Can receive messages", "Other agents and you can reach it.", agent.can_receive],
+          ["hidden", "Hidden", "Leaves it out of other agents' directory.", agent.hidden],
+        ] as const
+      ).map(([key, label, hint, value]) => (
+        <SettingRow key={key} label={label} hint={hint}>
+          <Toggle label={label} checked={value} disabled={revoked} onChange={(v) => void patch({ [key]: v })} />
+        </SettingRow>
+      ))}
+
+      <H3>Access</H3>
+      {token && (
+        <>
+          <p className="text-sm">New token. It's shown only once: update the agent's configuration with it.</p>
+          <CopyBlock text={token} label="Token" />
+        </>
+      )}
+      {revoked ? (
+        <p className="text-sm text-subtle">This agent is revoked. Its handle can't be reused.</p>
+      ) : (
+        <>
+          <SettingRow label={agent.status === "paused" ? "Paused" : "Pause"} hint="Stops deliveries to it and rejects messages from it until you resume.">
+            <Button busy={busy === "pause"} onClick={() => act("pause", () => api("PATCH", `/api/owner/agents/${agent.handle}`, { status: agent.status === "paused" ? "active" : "paused" }))}>
+              {agent.status === "paused" ? "Resume" : "Pause"}
             </Button>
+          </SettingRow>
+          {!agent.grant_id && (
+            <SettingRow label="Rotate token" hint="Issues a new token and invalidates the old one.">
+              <Button busy={busy === "rotate"} onClick={() => act("rotate", async () => setToken((await api<{ token: string }>("POST", `/api/owner/agents/${agent.handle}/rotate`, {})).token))}>
+                Rotate
+              </Button>
+            </SettingRow>
           )}
-          {agent.status === "paused" && (
-            <Button busy={busy === "pause"} onClick={() => act("pause", () => api("PATCH", `/api/owner/agents/${agent.handle}`, { status: "active" }))}>
-              Resume
-            </Button>
-          )}
-          {!agent.grant_id && !revoked && (
-            <Button busy={busy === "rotate"} onClick={() => act("rotate", async () => setToken((await api<{ token: string }>("POST", `/api/owner/agents/${agent.handle}/rotate`, {})).token))}>
-              Rotate token
-            </Button>
-          )}
-          {!revoked && (
+          <SettingRow label="Revoke" hint="Removes it for good. Its handle can never be reused.">
             <Button
               variant="danger"
               busy={busy === "revoke"}
@@ -392,9 +517,9 @@ function AgentDetail({ agent, onChange }: { agent: Agent; onChange: () => void }
             >
               Revoke
             </Button>
-          )}
-        </div>
-      </Card>
-    </div>
+          </SettingRow>
+        </>
+      )}
+    </Page>
   );
 }

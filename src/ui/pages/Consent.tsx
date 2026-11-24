@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { Button, Card, ErrorNote, Field, Input, Textarea, cx } from "../components";
+import { Button, Callout, ErrorNote, Field, Input, Loading, Textarea, cx } from "../components";
 
 interface ConsentInfo {
   details: { clientId: string; clientName: string; clientDomain?: string; redirectHost: string; redirectIsLoopback: boolean; scope: string[] };
@@ -46,18 +46,17 @@ export function ConsentPage() {
 
   if (!info) {
     return (
-      <div className="grid min-h-full place-items-center p-4">
-        {error ? <ErrorNote error={error} /> : <p className="text-sm text-subtle">Loading…</p>}
-      </div>
+      <div className="mx-auto max-w-[460px] px-5 py-16">{error ? <ErrorNote error={error} /> : <Loading />}</div>
     );
   }
   const d = info.details;
   return (
-    <div className="grid min-h-full place-items-center p-4">
-      <Card className="w-full max-w-lg space-y-5 p-6">
+    <div className="grid min-h-full place-items-center px-5 py-10">
+      <div className="w-full max-w-[460px] space-y-5">
         <div>
-          <h1 className="text-lg font-semibold">Connect {d.clientName} to your hub?</h1>
-          <p className="mt-1 text-sm text-subtle">
+          <img src="/favicon.svg" alt="" className="mb-4 size-10 rounded-lg" />
+          <h1 className="text-2xl font-bold">Connect {d.clientName} to your hub?</h1>
+          <p className="mt-2 text-sm text-subtle">
             {d.clientDomain ? (
               <>
                 Published by <strong className="text-fg">{d.clientDomain}</strong>.
@@ -67,19 +66,22 @@ export function ConsentPage() {
             )}{" "}
             Access goes to <strong className="text-fg">{d.redirectHost}</strong>.
           </p>
-          {info.suggestedMode === "multi" && <p className="mt-2 text-sm text-subtle">Grok Bot connectors sign in through Cursor, so a Grok connection shows up here as Cursor. Choose “Shared by several agents”.</p>}
-          {d.redirectIsLoopback && <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-300">This sends access to an app on a computer. Continue only if you just started connecting from it.</p>}
+          {info.suggestedMode === "multi" && <Callout icon="💡">Grok Bot connectors sign in through Cursor, so a Grok connection shows up here as Cursor. Choose “Shared by several agents”.</Callout>}
+          {d.redirectIsLoopback && <Callout icon="⚠️" tone="yellow">This sends access to an app on a computer. Continue only if you just started connecting from it.</Callout>}
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
           {(["single", "multi"] as const).map((m) => (
             <button
               key={m}
               onClick={() => setMode(m)}
-              className={cx("rounded-md border p-3 text-left text-sm", mode === m ? "border-accent ring-1 ring-accent" : "border-line hover:bg-muted")}
+              className={cx("flex w-full items-start gap-3 rounded-md px-3 py-2.5 text-left text-sm", mode === m ? "bg-hover" : "hover:bg-hover")}
             >
-              <span className="block font-medium">{m === "single" ? "One agent" : "Shared by several agents"}</span>
-              <span className="text-xs text-subtle">{m === "single" ? "This connection is one agent with its own identity." : "For Grok: every Bot on the account joins with its own invite."}</span>
+              <span className={cx("mt-0.5 grid size-4 shrink-0 place-items-center rounded-full", mode === m ? "bg-accent" : "shadow-[inset_0_0_0_1.5px_var(--faint)]")}>{mode === m && <span className="size-1.5 rounded-full bg-white" />}</span>
+              <span>
+                <span className="block font-medium">{m === "single" ? "One agent" : "Shared by several agents"}</span>
+                <span className="text-[13px] text-subtle">{m === "single" ? "This connection is one agent with its own identity." : "For Grok: every Bot on the account joins with its own invite."}</span>
+              </span>
             </button>
           ))}
         </div>
@@ -98,7 +100,7 @@ export function ConsentPage() {
           </div>
         ) : info.sharedConnections.length > 0 ? (
           <Field label="Connection" hint="Reconnecting an account keeps the Bots that already joined.">
-            <select className="w-full rounded-md border border-line bg-panel px-3 py-2 text-sm" value={reuse} onChange={(e) => setReuse(e.target.value)}>
+            <select className="w-full rounded-md bg-field px-2.5 py-1.5 text-sm shadow-[inset_0_0_0_1px_var(--line)] outline-none" value={reuse} onChange={(e) => setReuse(e.target.value)}>
               {info.sharedConnections.map((g) => (
                 <option key={g.id} value={g.id}>
                   Reconnect {g.client_name} ({g.agents.length ? g.agents.join(", ") : "no Bots yet"})
@@ -112,15 +114,15 @@ export function ConsentPage() {
         )}
 
         <ErrorNote error={error} />
-        <div className="flex justify-end gap-2">
-          <Button busy={busy === "deny"} disabled={!!busy} onClick={() => decide("deny")}>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="ghost" busy={busy === "deny"} disabled={!!busy} onClick={() => decide("deny")}>
             Deny
           </Button>
           <Button variant="primary" busy={busy === "approve"} disabled={!!busy} onClick={() => decide("approve")}>
             Approve with passkey
           </Button>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }
